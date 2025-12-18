@@ -1,25 +1,42 @@
-# backend.py
-
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from backend.rag import rag_chain
+import re
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+class VideoRequest(BaseModel):
+    video_url: str
 
 
-class Query(BaseModel):
-    question: str
+def extract_video_id(url: str) -> str:
+    """
+    Supports:
+    - https://www.youtube.com/watch?v=VIDEO_ID
+    - https://youtu.be/VIDEO_ID
+    """
+    patterns = [
+        r"v=([a-zA-Z0-9_-]{11})",
+        r"youtu\.be/([a-zA-Z0-9_-]{11})"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
-@app.post("/ask")
-def ask(query: Query):
-    answer = rag_chain.invoke(query.question)
-    return {"answer": answer}
+
+from backend.index_manager import build_index_for_video
+
+from backend.schemas import LoadVideoRequest
+
+
+@app.post("/load_video")
+def load_video(request: LoadVideoRequest):
+    video_url = str(request.video_url) 
+    video_id = extract_video_id(video_url)  # whatever logic you use
+
+    return {
+        "message": "Video accepted",
+        "video_id": video_id
+    }
+
