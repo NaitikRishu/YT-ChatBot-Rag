@@ -1,42 +1,60 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, HttpUrl
 import re
+
+from backend.index_manager import build_index_for_video
+from backend.rag import get_rag_chain
 
 app = FastAPI()
 
-class VideoRequest(BaseModel):
-    video_url: str
+# Global state to track current retriever
+CURRENT_RETRIEVER = None
 
+# --------- SCHEMAS ----------
+class LoadVideoRequest(BaseModel):
+    video_url: HttpUrl
 
+class AskRequest(BaseModel):
+    question: str
+
+# --------- UTILS ----------
 def extract_video_id(url: str) -> str:
-    """
-    Supports:
-    - https://www.youtube.com/watch?v=VIDEO_ID
-    - https://youtu.be/VIDEO_ID
-    """
     patterns = [
         r"v=([a-zA-Z0-9_-]{11})",
-        r"youtu\.be/([a-zA-Z0-9_-]{11})"
+        r"youtu\.be/([a-zA-Z0-9_-]{11})",
     ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    raise ValueError("Invalid YouTube URL")
 
-
-from backend.index_manager import build_index_for_video
-
-from backend.schemas import LoadVideoRequest
-
-
+# --------- ROUTES ----------
 @app.post("/load_video")
-def load_video(request: LoadVideoRequest):
-    video_url = str(request.video_url) 
-    video_id = extract_video_id(video_url)  # whatever logic you use
+def load_video(req: LoadVideoRequest):
+    global CURRENT_RETRIEVER
+    
+    try:
+        video_id = extract_video_id(str(req.video_url))
+        CURRENT_RETRIEVER = build_index_for_video(video_id)
+        return {"message": "Video indexed successfully", "video_id": video_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load video: {str(e)}")
 
-    return {
-        "message": "Video accepted",
-        "video_id": video_id
-    }
-
+@app.post("/ask")
+def ask(req: AskRequest):
+    global CURRENT_RETRIEVER
+    
+    if CURRENT_RETRIEVER is None:
+        raise HTTPException(
+            status_code=400, 
+            detail="No video loaded. Please load a video first using /load_video"
+        )
+    
+    try:
+        # Get the RAG chain with the current retriever
+        rag_chain = get_rag_chain(CURRENT_RETRIEVER)
+        answer = rag_chain.invoke(req.question)
+        return {"answer": answer}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process question: {str(e)}")
