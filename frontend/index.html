@@ -1,22 +1,43 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>YouTube RAG Chat</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouTube RAG Chatbot</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>YouTube ChatBot</h1>
-  <input
-  id="video"
-  placeholder="Paste YouTube link here"
-  style="width:100%; margin-bottom:10px"
-/>
+  <div class="container">
+    <h1>🎬 YouTube Chatbot</h1>
+    <p class="subtitle">Ask questions about any YouTube video using AI</p>
 
-  <textarea id="question" placeholder="Ask something..."></textarea>
-  <button onclick="ask()">Ask</button>
+    <!-- Load Video Section -->
+    <div class="section">
+      <h2>Load Video</h2>
+      <input 
+        id="videoUrl" 
+        type="text" 
+        placeholder="Paste YouTube URL (e.g., https://www.youtube.com/watch?v=...)" 
+      />
+      <button id="loadBtn">Load Video</button>
+      <div id="loadStatus"></div>
+    </div>
 
-  <pre id="answer"></pre>
+    <hr />
 
-  <script src="app.js"></script>
+    <!-- Ask Question Section -->
+    <div class="section">
+      <h2>Ask a Question</h2>
+      <input 
+        id="question" 
+        type="text" 
+        placeholder="What is this video about?" 
+      />
+      <button id="askBtn">Ask Question</button>
+      <pre id="answer"></pre>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
