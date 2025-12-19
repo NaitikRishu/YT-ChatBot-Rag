@@ -4,7 +4,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_huggingface import HuggingFacePipeline
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
-# ---------------- LLM (initialized once) ----------------
+#LLM
 model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -24,7 +24,7 @@ pipe = pipeline(
 
 llm = HuggingFacePipeline(pipeline=pipe)
 
-# ---------------- PROMPT ----------------
+#prompt
 prompt = PromptTemplate(
     template="""<|system|>
 You are a helpful assistant. Answer questions based only on the provided context. If the answer is not in the context, say "The video does not clearly explain this."</s>
@@ -37,11 +37,11 @@ Question: {question}</s>
     input_variables=["context", "question"],
 )
 
-# ---------------- FORMAT DOCS ----------------
+# Join documents into a single string
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
-# ---------------- POST-PROCESSING ----------------
+
 def extract_answer(text: str) -> str:
     """
     Extract only the answer portion from the LLM output.
@@ -54,16 +54,16 @@ def extract_answer(text: str) -> str:
     else:
         answer = text.strip()
     
-    # Remove any remaining prompt artifacts
+    
     answer = answer.replace("You are a helpful assistant.", "")
     answer = answer.replace("Do NOT repeat the context.", "")
     
-    # Clean up extra whitespace
+   
     answer = " ".join(answer.split())
     
     return answer
 
-# ---------------- RAG CHAIN FACTORY ----------------
+# Rag Chain
 def get_rag_chain(retriever):
     """
     Create a RAG chain with the provided retriever.

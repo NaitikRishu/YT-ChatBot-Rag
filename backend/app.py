@@ -7,17 +7,17 @@ from backend.rag import get_rag_chain
 
 app = FastAPI()
 
-# Global state to track current retriever
+
 CURRENT_RETRIEVER = None
 
-# --------- SCHEMAS ----------
+
 class LoadVideoRequest(BaseModel):
     video_url: HttpUrl
 
 class AskRequest(BaseModel):
     question: str
 
-# --------- UTILS ----------
+
 def extract_video_id(url: str) -> str:
     patterns = [
         r"v=([a-zA-Z0-9_-]{11})",
@@ -29,7 +29,7 @@ def extract_video_id(url: str) -> str:
             return m.group(1)
     raise ValueError("Invalid YouTube URL")
 
-# --------- ROUTES ----------
+
 @app.post("/load_video")
 def load_video(req: LoadVideoRequest):
     global CURRENT_RETRIEVER
@@ -52,7 +52,7 @@ def ask(req: AskRequest):
         )
     
     try:
-        # Get the RAG chain with the current retriever
+        
         rag_chain = get_rag_chain(CURRENT_RETRIEVER)
         answer = rag_chain.invoke(req.question)
         return {"answer": answer}
