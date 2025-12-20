@@ -3,11 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl, validator
 import re
 import logging
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 from backend.index_manager import build_index_for_video, load_existing_index
-from backend.rag import get_rag_chain
+from backend.rag import get_rag_chain_with_history
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ app.add_middleware(
 CURRENT_RETRIEVER = None
 CURRENT_VIDEO_ID = None
 LAST_LOAD_TIME = None
+CONVERSATION_HISTORY = []  
 
 
 class LoadVideoRequest(BaseModel):
@@ -40,8 +41,15 @@ class LoadVideoRequest(BaseModel):
         return v
 
 
+class Message(BaseModel):
+    role: str 
+    content: str
+    timestamp: Optional[str] = None
+
+
 class AskRequest(BaseModel):
     question: str
+    conversation_history: Optional[List[Message]] = []
     
     @validator('question')
     def validate_question(cls, v):
@@ -53,15 +61,7 @@ class AskRequest(BaseModel):
 
 
 def extract_video_id(url: str) -> str:
-    """
-    Extract video ID from various YouTube URL formats.
-    
-    Supports:
-    - https://www.youtube.com/watch?v=VIDEO_ID
-    - https://youtu.be/VIDEO_ID
-    - https://www.youtube.com/embed/VIDEO_ID
-    - https://www.youtube.com/v/VIDEO_ID
-    """
+    """Extract video ID from various YouTube URL formats."""
     patterns = [
         r'(?:v=|/)([a-zA-Z0-9_-]{11})(?:\?|&|$|/)',
         r'youtu\.be/([a-zA-Z0-9_-]{11})',
@@ -97,39 +97,42 @@ def root():
         "message": "YouTube RAG Chatbot API",
         "video_loaded": CURRENT_VIDEO_ID is not None,
         "current_video": CURRENT_VIDEO_ID,
-        "last_load_time": LAST_LOAD_TIME.isoformat() if LAST_LOAD_TIME else None
+        "last_load_time": LAST_LOAD_TIME.isoformat() if LAST_LOAD_TIME else None,
+        "conversation_length": len(CONVERSATION_HISTORY)
     }
 
 
 @app.post("/load_video")
 async def load_video(req: LoadVideoRequest):
     """
-    Load and index a YouTube video's transcript using yt-dlp.
-    
-    This will overwrite any previously loaded video.
-    Processing may take 30-60 seconds depending on video length.
+    Load and index a YouTube video's transcript.
+    Clears conversation history when loading a new video.
     """
-    global CURRENT_RETRIEVER, CURRENT_VIDEO_ID, LAST_LOAD_TIME
+    global CURRENT_RETRIEVER, CURRENT_VIDEO_ID, LAST_LOAD_TIME, CONVERSATION_HISTORY
     
     try:
-        # Extract and validate video ID
         video_id = extract_video_id(str(req.video_url))
         logger.info(f"Loading video: {video_id}")
         
         # Check if same video is already loaded
         if CURRENT_VIDEO_ID == video_id and CURRENT_RETRIEVER is not None:
-            logger.info(f"Video {video_id} already loaded")
+            logger.info(f"Video {video_id} already loaded, clearing chat history")
+            # Clear conversation history but keep the video loaded
+            CONVERSATION_HISTORY = []
             return {
-                "message": "Video already loaded",
+                "message": "Video already loaded, chat history cleared",
                 "video_id": video_id,
                 "cached": True
             }
         
-        # Build index using yt-dlp (this may take 30-60 seconds)
+        # Build index
         logger.info("Building index - this may take 30-60 seconds...")
         CURRENT_RETRIEVER = build_index_for_video(video_id)
         CURRENT_VIDEO_ID = video_id
         LAST_LOAD_TIME = datetime.utcnow()
+        
+        # Clear conversation history for new video
+        CONVERSATION_HISTORY = []
         
         logger.info(f"Successfully loaded video {video_id}")
         return {
@@ -145,7 +148,7 @@ async def load_video(req: LoadVideoRequest):
         # Provide helpful message for rate limiting
         if "rate limiting" in error_msg.lower() or "429" in error_msg:
             raise HTTPException(
-                status_code=503,  # Service Unavailable
+                status_code=503,
                 detail={
                     "error": "YouTube Rate Limit",
                     "message": "YouTube is temporarily blocking requests from your network.",
@@ -172,10 +175,9 @@ async def load_video(req: LoadVideoRequest):
 async def ask(req: AskRequest):
     """
     Ask a question about the loaded video.
-    
-    Requires a video to be loaded first via /load_video.
+    Supports conversation history for contextual responses.
     """
-    global CURRENT_RETRIEVER
+    global CURRENT_RETRIEVER, CONVERSATION_HISTORY
     
     if CURRENT_RETRIEVER is None:
         raise HTTPException(
@@ -186,20 +188,54 @@ async def ask(req: AskRequest):
     try:
         logger.info(f"Processing question: {req.question[:50]}...")
         
-        # Get RAG chain and process question
-        rag_chain = get_rag_chain(CURRENT_RETRIEVER)
-        answer = rag_chain.invoke(req.question)
+        # Use client-provided history if available, otherwise use server history
+        history = req.conversation_history if req.conversation_history else CONVERSATION_HISTORY
         
-        # Validate answer isn't empty
+        # Get RAG chain with history support
+        rag_chain = get_rag_chain_with_history(CURRENT_RETRIEVER)
+        
+        # Format conversation history for context
+        history_context = ""
+        if history:
+            history_context = "\n\nPrevious conversation:\n"
+            for msg in history[-3:]:  # Last 3 messages for context
+                role = "User" if msg.role == "user" else "Assistant"
+                history_context += f"{role}: {msg.content}\n"
+        
+        # Invoke RAG chain with history context
+        full_question = req.question
+        if history_context:
+            full_question = f"{history_context}\nCurrent question: {req.question}"
+        
+        answer = rag_chain.invoke(full_question)
+        
+        # Validate answer
         if not answer or len(answer.strip()) == 0:
             answer = "I couldn't generate a meaningful answer. Please rephrase your question."
         
-        logger.info(f"Generated answer: {answer[:100]}...")
+        # Store in server-side history
+        CONVERSATION_HISTORY.append(Message(
+            role="user",
+            content=req.question,
+            timestamp=datetime.utcnow().isoformat()
+        ))
+        CONVERSATION_HISTORY.append(Message(
+            role="assistant",
+            content=answer,
+            timestamp=datetime.utcnow().isoformat()
+        ))
+        
+        # Keep only last 20 messages
+        if len(CONVERSATION_HISTORY) > 20:
+            CONVERSATION_HISTORY = CONVERSATION_HISTORY[-20:]
+        
+        logger.info(f"Generated answer (length: {len(answer)})")
         
         return {
             "answer": answer,
             "video_id": CURRENT_VIDEO_ID,
-            "question": req.question
+            "question": req.question,
+            "conversation_length": len(CONVERSATION_HISTORY)
         }
         
     except Exception as e:
@@ -210,6 +246,24 @@ async def ask(req: AskRequest):
         )
 
 
+@app.get("/conversation")
+async def get_conversation():
+    """Get current conversation history"""
+    return {
+        "video_id": CURRENT_VIDEO_ID,
+        "history": CONVERSATION_HISTORY,
+        "length": len(CONVERSATION_HISTORY)
+    }
+
+
+@app.post("/conversation/clear")
+async def clear_conversation():
+    """Clear conversation history"""
+    global CONVERSATION_HISTORY
+    CONVERSATION_HISTORY = []
+    return {"message": "Conversation history cleared"}
+
+
 @app.get("/status")
 async def status():
     """Get current system status"""
@@ -217,7 +271,8 @@ async def status():
         "video_loaded": CURRENT_RETRIEVER is not None,
         "current_video_id": CURRENT_VIDEO_ID,
         "last_load_time": LAST_LOAD_TIME.isoformat() if LAST_LOAD_TIME else None,
-        "ready_for_questions": CURRENT_RETRIEVER is not None
+        "ready_for_questions": CURRENT_RETRIEVER is not None,
+        "conversation_length": len(CONVERSATION_HISTORY)
     }
 
 
