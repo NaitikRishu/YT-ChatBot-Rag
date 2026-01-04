@@ -14,8 +14,8 @@ pipe = pipeline(
     "text-generation",
     model=model,
     tokenizer=tokenizer,
-    max_new_tokens=200,
-    temperature=0.3,
+    max_new_tokens=300,
+    temperature=0.2,
     do_sample=True,
     top_p=0.9,
     repetition_penalty=1.2,
@@ -108,6 +108,7 @@ def get_rag_chain(retriever):
         | llm
         | StrOutputParser()
         | RunnableLambda(extract_answer)
+        
     )
     return rag_chain
 

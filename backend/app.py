@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="YouTube RAG Chatbot API")
 
+
+
+
 # CORS settings
 app.add_middleware(
     CORSMiddleware,
